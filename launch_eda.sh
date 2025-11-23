@@ -16,4 +16,5 @@ export NUMBA_CACHE_DIR=/scratch/st-evanesce-1/vivian/.numba_cache
 export MPLCONFIGDIR=/scratch/st-evanesce-1/vivian/.matplotlib_cache
 
 python eda_cv.py --model baseline
+python eda_cv.py --model ridge
 
