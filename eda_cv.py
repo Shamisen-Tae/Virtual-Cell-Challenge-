@@ -9,7 +9,6 @@ from sklearn.multioutput import MultiOutputRegressor
 import subprocess
 import os
 import json
-import tempfile
 from cell_eval import MetricsEvaluator
 
 parser = argparse.ArgumentParser(description='Run CV evaluation for vcc models')
@@ -61,48 +60,31 @@ def create_anndata_for_celleval(predictions, target_genes, gene_names):
     return adata
 
 
-def run_celleval_metrics(pred_file, truth_file, output_dir):
+def run_celleval_metrics(adata_pred, adata_truth):
     """
     Run cell-eval to compute VCC metrics
     
     Returns dict with: mae, des, pds
     """
     try:
-        os.makedirs(output_dir, exist_ok=True)
+        evaluator = MetricsEvaluator(
+            adata_pred=adata_truth,
+            adata_real=adata_real,
+            num_threads=24,
+        )
         
-        print(f"  Running cell-eval with VCC profile...")
-        result = subprocess.run([
-            "cell-eval", "run",
-            "-ap", pred_file,
-            "-ar", truth_file,
-            "-o", output_dir,
-            "--profile", "vcc",
-            "--control-pert", "non-targeting",
-            "--pert-col", "target_gene",
-            "--num-threads", "24"
-        ], check=True)
+        results, agg_results = evaluator.compute()
         
-        print(f"  stdout: {result.stdout}")
+        # Extract mean row 
+        mean_row = agg_results.filter(agg_results['statistic'] == 'mean')
         
-        # Read aggregated results
-        results_file = os.path.join(output_dir, "agg_results.csv")
-        if os.path.exists(results_file):
-            agg_results = pd.read_csv(results_file)
-            print(f"  Aggregated results:\n{agg_results}")
-            
-            # Get mean row
-            mean_row = agg_results[agg_results['statistic'] == 'mean']
-            if len(mean_row) > 0:
-                mean_dict = mean_row.iloc[0].to_dict()
-                metrics = {
-                    'mae': mean_dict.get('mae', np.nan),
-                    'des': mean_dict.get('overlap_at_N', np.nan),  # DES
-                    'pds': mean_dict.get('discrimination_score_l1', np.nan),  # PDS
-                }
-                return metrics
-
-        return {'mae': np.nan, 'des': np.nan, 'pds': np.nan}
-
+        metrics = {
+            'mae': mean_row['mae'][0] if 'mae' in agg_results.columns else np.nan,
+            'des': mean_row['overlap_at_N'][0] if 'overlap_at_N' in agg_results.columns else np.nan,
+            'pds': mean_row['discrimination_score_l1'][0] if 'discrimination_score_l1' in agg_results.columns else np.nan,
+        }
+        
+        return metrics
     except Exception as e:
         print(f"Error running cell-eval: {e}")
         import traceback
@@ -112,8 +94,6 @@ def run_celleval_metrics(pred_file, truth_file, output_dir):
 print(f"Running {args.n_folds}-Fold Cross-Validation")
 
 
-temp_dir = tempfile.mkdtemp(prefix="celleval_cv_")
-print(f"Using temporary directory: {temp_dir}")
 
 kf = KFold(n_splits=args.n_folds, shuffle=True, random_state=42)
 
@@ -140,8 +120,6 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
     adata_truth = create_anndata_for_celleval(
         y_val_fold, val_genes_fold, adata_train.var_names
     )
-    truth_file = os.path.join(temp_dir, f"fold{fold_idx}_truth.h5ad")
-    adata_truth.write(truth_file)
     
     # BASELINE MODEL
     if args.model == 'baseline':
@@ -160,13 +138,10 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
         adata_pred = create_anndata_for_celleval(
             y_val_pred_baseline, val_genes_fold, adata_train.var_names
         )
-        pred_file = os.path.join(temp_dir, f"fold{fold_idx}_baseline_pred.h5ad")
-        adata_pred.write(pred_file)
     
         # Run cell-eval
         print("[Baseline] Running cell-eval...")
-        output_dir = os.path.join(temp_dir, f"fold{fold_idx}_baseline_results")
-        celleval_metrics = run_celleval_metrics(pred_file, truth_file, output_dir)
+        celleval_metrics = run_celleval_metrics(adata_pred, adata_truth)
         fold_results['celleval_mae'].append(celleval_metrics.get('mae', np.nan))
         fold_results['celleval_des'].append(celleval_metrics.get('des', np.nan))
         fold_results['celleval_pds'].append(celleval_metrics.get('pds', np.nan))
@@ -264,6 +239,3 @@ detailed_df.to_csv(f'{args.model}_cv_detailed_celleval.csv', index=False)
 print(f"\nSaved: {args.model}_cv_summary_celleval.csv")
 print(f"\nSaved: {args.model}_detailed_celleval.csv")
 
-
-import shutil
-shutil.rmtree(temp_dir)
