@@ -4,15 +4,18 @@ import pandas as pd
 import scanpy as sc
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, Ridge
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 import subprocess
 import os
 import json
 from cell_eval import MetricsEvaluator
 
 parser = argparse.ArgumentParser(description='Run CV evaluation for vcc models')
-parser.add_argument('--model', type=str, required=True, choices=['baseline', 'elasticnet', 'randomforest', 'vae']) #TODO: implement RF and VAE
+parser.add_argument('--model', type=str, required=True, choices=['baseline', 'ridge', 'elasticnet', 'randomforest', 'vae']) #TODO: implement RF and VAE
 parser.add_argument('--n_folds', type=int, default=5, help='number of CV folds (default 5)')
 args = parser.parse_args()
 
@@ -70,6 +73,8 @@ def run_celleval_metrics(adata_pred, adata_truth):
         evaluator = MetricsEvaluator(
             adata_pred=adata_pred,
             adata_real=adata_truth,
+            control_pert="non-targeting",
+            pert_col="target_gene",
             num_threads=24,
         )
         
@@ -126,143 +131,98 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
     if args.model == 'baseline':
         print("\n[Baseline] Computing mean expression...")
         baseline_pred = np.asarray(y_train_fold.mean(axis=0)).ravel()
-        y_train_pred_baseline = np.tile(baseline_pred, (len(train_idx), 1))
-        y_val_pred_baseline = np.tile(baseline_pred, (len(val_idx), 1))
-        fold_results['train_mae'].append(
-            mean_absolute_error(y_train_fold, y_train_pred_baseline)
+        y_train_pred = np.tile(baseline_pred, (len(train_idx), 1))
+        y_val_pred = np.tile(baseline_pred, (len(val_idx), 1))
+
+    if args.model == 'ridge':
+        print("\n[Ridge] Training model...")
+        ridge_model = MultiOutputRegressor(
+            Ridge(alpha=1.0),
+            n_jobs=24
         )
-        fold_results['val_mae'].append(
-            mean_absolute_error(y_val_fold, y_val_pred_baseline)
-        )
-        fold_results['train_mse'].append(
-            mean_squared_error(y_train_fold, y_train_pred_baseline)
-        )
-        fold_results['val_mse'].append(
-            mean_squared_error(y_val_fold, y_val_pred_baseline)
-        )
-    
-        # Save predictions for cell-eval
-        adata_pred = create_anndata_for_celleval(
-            y_val_pred_baseline, val_genes_fold, adata_train.var_names
-        )
-    
-        # Run cell-eval
-        print("[Baseline] Running cell-eval...")
-        celleval_metrics = run_celleval_metrics(adata_pred, adata_truth)
-        fold_results['celleval_mae'].append(celleval_metrics.get('mae', np.nan))
-        fold_results['celleval_des'].append(celleval_metrics.get('des', np.nan))
-        fold_results['celleval_pds'].append(celleval_metrics.get('pds', np.nan))
-    
-        print(f"  Train MAE: {fold_results['train_mae'][-1]:.4f}")
-        print(f"  Val MAE: {fold_results['val_mae'][-1]:.4f}")
-        print(f"  Train MSE: {fold_results['train_mse'][-1]:.4f}")
-        print(f"  Val MSE: {fold_results['val_mse'][-1]:.4f}")
-        print(f"  cell-eval MAE: {celleval_metrics.get('mae', 'N/A')}")
-        print(f"  cell-eval DES: {celleval_metrics.get('des', 'N/A')}")
-        print(f"  cell-eval PDS: {celleval_metrics.get('pds', 'N/A')}")
-    
+        ridge_model.fit(X_train_fold, y_train_fold)
+        print("[Ridge] Predicting...")
+        y_train_pred = ridge_model.predict(X_train_fold)
+        y_val_pred = ridge_model.predict(X_val_fold)
+
     
     # ELASTICNET MODEL
     if args.model == 'elasticnet':
         print("\n[ElasticNet] Training model...")
         elasticnet_model = MultiOutputRegressor(
-            ElasticNet(alpha=1.0, l1_ratio=0.5, max_iter=5000, tol=1e-3, selection='random'),
-            n_jobs=24
+        #    Pipeline([
+        #        ("scaler", StandardScaler()),
+        #        ("enet", 
+            ElasticNet(
+                alpha=0.0001,
+                l1_ratio=0.5,
+                max_iter=10000,
+                tol=1e-4,
+            ),
+        #)
+        #]),
+        n_jobs=24
         )
         elasticnet_model.fit(X_train_fold, y_train_fold)
     
         print("[ElasticNet] Predicting...")
-        y_train_pred_en = elasticnet_model.predict(X_train_fold)
-        y_val_pred_en = elasticnet_model.predict(X_val_fold)
+        y_train_pred = elasticnet_model.predict(X_train_fold)
+        y_val_pred = elasticnet_model.predict(X_val_fold)
     
-        y_train_pred_en = np.maximum(y_train_pred_en, 0)
-        y_val_pred_en = np.maximum(y_val_pred_en, 0)
+        y_train_pred = np.maximum(y_train_pred, 0)
+        y_val_pred = np.maximum(y_val_pred, 0)
     
-        fold_results['train_mae'].append(
-            mean_absolute_error(y_train_fold, y_train_pred_en)
-        )
-        fold_results['val_mae'].append(
-            mean_absolute_error(y_val_fold, y_val_pred_en)
-        )
-        fold_results['train_mse'].append(
-            mean_squared_error(y_train_fold, y_train_pred_baseline)
-        )
-        fold_results['val_mse'].append(
-            mean_squared_error(y_val_fold, y_val_pred_baseline)
-        )
-    
-        # Save predictions for cell-eval
-        adata_pred = create_anndata_for_celleval(
-            y_val_pred_en, val_genes_fold, adata_train.var_names
-        )
-    
-        # Run cell-eval
-        print("[ElasticNet] Running cell-eval...")
-        celleval_metrics = run_celleval_metrics(adata_pred, adata_truth)
-        fold_results['celleval_mae'].append(celleval_metrics.get('mae', np.nan))
-        fold_results['celleval_des'].append(celleval_metrics.get('des', np.nan))
-        fold_results['celleval_pds'].append(celleval_metrics.get('pds', np.nan))
-    
-        print(f"  Train MAE: {fold_results['train_mae'][-1]:.4f}")
-        print(f"  Val MAE: {fold_results['val_mae'][-1]:.4f}")
-        print(f"  Train MSE: {fold_results['train_mse'][-1]:.4f}")
-        print(f"  Val MSE: {fold_results['val_mse'][-1]:.4f}")
-        print(f"  cell-eval MAE: {celleval_metrics.get('mae', 'N/A')}")
-        print(f"  cell-eval DES: {celleval_metrics.get('des', 'N/A')}")
-        print(f"  cell-eval PDS: {celleval_metrics.get('pds', 'N/A')}")
-
 
     # RANDOM FOREST MODEL
     if args.model == 'randomforest':
         print("\n[RandomForest] Training model...")
-        rf_model = MultiOutputRegressor(
-            RandomForestRegressor(n_estimators=50, max_depth=15, 
-                min_samples_split=20, n_jobs=24),
-            n_jobs=1
-        )
+        rf_model = RandomForestRegressor(n_estimators=10, n_jobs=24, verbose=2)
+        
+        print("Built model")
         rf_model.fit(X_train_fold, y_train_fold)
     
         print("[RandomForest] Predicting...")
-        y_train_pred_en = rf_model.predict(X_train_fold)
-        y_val_pred_en = rf_model.predict(X_val_fold)
+        y_train_pred = rf_model.predict(X_train_fold)
+        y_val_pred = rf_model.predict(X_val_fold)
     
-        y_train_pred_en = np.maximum(y_train_pred_en, 0)
-        y_val_pred_en = np.maximum(y_val_pred_en, 0)
+        y_train_pred = np.maximum(y_train_pred, 0)
+        y_val_pred = np.maximum(y_val_pred, 0)
     
-        fold_results['train_mae'].append(
-            mean_absolute_error(y_train_fold, y_train_pred_en)
-        )
-        fold_results['val_mae'].append(
-            mean_absolute_error(y_val_fold, y_val_pred_en)
-        )
-        fold_results['train_mse'].append(
-            mean_squared_error(y_train_fold, y_train_pred_baseline)
-        )
-        fold_results['val_mse'].append(
-            mean_squared_error(y_val_fold, y_val_pred_baseline)
-        )
+    fold_results['train_mae'].append(
+        mean_absolute_error(y_train_fold, y_train_pred)
+    )
+    fold_results['val_mae'].append(
+        mean_absolute_error(y_val_fold, y_val_pred)
+    )
+    fold_results['train_mse'].append(
+         mean_squared_error(y_train_fold, y_train_pred)
+    )
+    fold_results['val_mse'].append(
+        mean_squared_error(y_val_fold, y_val_pred)
+    )
     
-        # Save predictions for cell-eval
-        adata_pred = create_anndata_for_celleval(
-            y_val_pred_en, val_genes_fold, adata_train.var_names
-        )
+    # Save predictions for cell-eval
+    adata_pred = create_anndata_for_celleval(
+        y_val_pred, val_genes_fold, adata_train.var_names
+    )
     
-        # Run cell-eval
-        print("[RandomForest] Running cell-eval...")
-        celleval_metrics = run_celleval_metrics(adata_pred, adata_truth)
-        fold_results['celleval_mae'].append(celleval_metrics.get('mae', np.nan))
-        fold_results['celleval_des'].append(celleval_metrics.get('des', np.nan))
-        fold_results['celleval_pds'].append(celleval_metrics.get('pds', np.nan))
+    # Run cell-eval
+    print("Running cell-eval...")
+    celleval_metrics = run_celleval_metrics(adata_pred, adata_truth)
+    fold_results['celleval_mae'].append(celleval_metrics.get('mae', np.nan))
+    fold_results['celleval_des'].append(celleval_metrics.get('des', np.nan))
+    fold_results['celleval_pds'].append(celleval_metrics.get('pds', np.nan))
     
-        print(f"  Train MAE: {fold_results['train_mae'][-1]:.4f}")
-        print(f"  Val MAE: {fold_results['val_mae'][-1]:.4f}")
-        print(f"  Train MSE: {fold_results['train_mse'][-1]:.4f}")
-        print(f"  Val MSE: {fold_results['val_mse'][-1]:.4f}")
-        print(f"  cell-eval MAE: {celleval_metrics.get('mae', 'N/A')}")
-        print(f"  cell-eval DES: {celleval_metrics.get('des', 'N/A')}")
-        print(f"  cell-eval PDS: {celleval_metrics.get('pds', 'N/A')}")
+    print(f"  Train MAE: {fold_results['train_mae'][-1]:.4f}")
+    print(f"  Val MAE: {fold_results['val_mae'][-1]:.4f}")
+    print(f"  Train MSE: {fold_results['train_mse'][-1]:.4f}")
+    print(f"  Val MSE: {fold_results['val_mse'][-1]:.4f}")
+    print(f"  cell-eval MAE: {celleval_metrics.get('mae', 'N/A')}")
+    print(f"  cell-eval DES: {celleval_metrics.get('des', 'N/A')}")
+    print(f"  cell-eval PDS: {celleval_metrics.get('pds', 'N/A')}")
 
-        # TODO: VAE
+    if args.model == "vae":
+        print("TODO: VAE")
 
 
 # AGGREGATE RESULTS

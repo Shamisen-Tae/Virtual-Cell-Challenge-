@@ -1,0 +1,2 @@
+Model,Train MAE (sklearn),Val MAE (sklearn),Train MSE (sklearn),Val MSE (sklearn),MAE (cell-eval),DES (cell-eval),PDS (cell-eval)
+ridge,0.2782±0.0000,0.2784±0.0002,0.1776±0.0000,0.1779±0.0002,0.0274±0.0003,0.0382±0.0010,0.8693±0.0080
