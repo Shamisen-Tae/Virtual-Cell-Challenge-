@@ -13,13 +13,20 @@ import subprocess
 import os
 import json
 from cell_eval import MetricsEvaluator
+from vae import train_vae, predict_vae
 
 parser = argparse.ArgumentParser(description='Run CV evaluation for vcc models')
-parser.add_argument('--model', type=str, required=True, choices=['baseline', 'ridge', 'elasticnet', 'randomforest', 'vae']) #TODO: implement RF and VAE
-parser.add_argument('--n_folds', type=int, default=5, help='number of CV folds (default 5)')
+parser.add_argument('--model', type=str, required=True, 
+        choices=['baseline', 'ridge', 'elasticnet', 'randomforest', 'vae'],
+        help='which model to run') 
+parser.add_argument('--n_folds', type=int, default=5, 
+        help='number of CV folds (default 5)')
+parser.add_argument('--train_file', type=str, 
+        default="/scratch/st-evanesce-1/vivian/vcc_data/adata_Training.h5ad", 
+        help='location of train file')
 args = parser.parse_args()
 
-train_file = "/scratch/st-evanesce-1/vivian/vcc_data/adata_Training.h5ad"
+train_file = args.train_file
 
 print("\nLoading training data...")
 adata_train = sc.read_h5ad(train_file)
@@ -145,22 +152,16 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
         y_train_pred = ridge_model.predict(X_train_fold)
         y_val_pred = ridge_model.predict(X_val_fold)
 
-    
     # ELASTICNET MODEL
     if args.model == 'elasticnet':
         print("\n[ElasticNet] Training model...")
         elasticnet_model = MultiOutputRegressor(
-        #    Pipeline([
-        #        ("scaler", StandardScaler()),
-        #        ("enet", 
             ElasticNet(
                 alpha=0.0001,
                 l1_ratio=0.5,
                 max_iter=10000,
                 tol=1e-4,
             ),
-        #)
-        #]),
         n_jobs=24
         )
         elasticnet_model.fit(X_train_fold, y_train_fold)
@@ -169,10 +170,6 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
         y_train_pred = elasticnet_model.predict(X_train_fold)
         y_val_pred = elasticnet_model.predict(X_val_fold)
     
-        y_train_pred = np.maximum(y_train_pred, 0)
-        y_val_pred = np.maximum(y_val_pred, 0)
-    
-
     # RANDOM FOREST MODEL
     if args.model == 'randomforest':
         print("\n[RandomForest] Training model...")
@@ -184,9 +181,26 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
         print("[RandomForest] Predicting...")
         y_train_pred = rf_model.predict(X_train_fold)
         y_val_pred = rf_model.predict(X_val_fold)
-    
-        y_train_pred = np.maximum(y_train_pred, 0)
-        y_val_pred = np.maximum(y_val_pred, 0)
+
+    # VARIATIONAL AUTOENCODER
+    if args.model == 'vae':
+        print("\n[VAE] Training model...")
+        vae_model = train_vae(
+            X_train_fold, y_train_fold,
+            latent_dim=128,
+            epochs=50,
+            batch_size=256,
+            learning_rate=1e-3,
+            device='cuda'
+        )
+        
+        print("[VAE] Predicting...")
+        n_genes_train = y_train_fold.shape[1]
+        n_genes_val = y_val_fold.shape[1]
+        y_train_pred = predict_vae(vae_model, X_train_fold, n_genes_train,
+                device='cuda')
+        y_val_pred = predict_vae(vae_model, X_val_fold, n_genes_val, 
+                device='cuda')
     
     fold_results['train_mae'].append(
         mean_absolute_error(y_train_fold, y_train_pred)
