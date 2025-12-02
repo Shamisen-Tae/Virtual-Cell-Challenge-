@@ -297,7 +297,7 @@ summary = pd.DataFrame({
 print("\n" + summary.to_string(index=False))
 
 # Save results
-summary.to_csv(f'results/{args.model}_cv_summary_celleval_final.csv', index=False)
+summary.to_csv(f'results/{args.model}_cv_summary_celleval.csv', index=False)
 
 # Save detailed results
 detailed_df = pd.DataFrame({
@@ -310,7 +310,7 @@ detailed_df = pd.DataFrame({
     f'{args.model}_DES': fold_results['celleval_des'],
     f'{args.model}_PDS': fold_results['celleval_pds'],
 })
-detailed_df.to_csv(f'results/{args.model}_cv_detailed_celleval_final.csv', index=False)
+detailed_df.to_csv(f'results/{args.model}_cv_detailed_celleval.csv', index=False)
 
 print(f"\nSaved: {args.model}_cv_summary_celleval.csv")
 print(f"\nSaved: {args.model}_detailed_celleval.csv")
