@@ -5,10 +5,11 @@ import scanpy as sc
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import ElasticNet, Ridge
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 import subprocess
 import os
 import json
@@ -17,7 +18,7 @@ from vae import train_vae, predict_vae
 
 parser = argparse.ArgumentParser(description='Run CV evaluation for vcc models')
 parser.add_argument('--model', type=str, required=True, 
-        choices=['baseline', 'ridge', 'elasticnet', 'randomforest', 'vae'],
+        choices=['baseline', 'ridge', 'elasticnet', 'randomforest', 'gradientboost', 'vae'],
         help='which model to run') 
 parser.add_argument('--n_folds', type=int, default=5, 
         help='number of CV folds (default 5)')
@@ -41,11 +42,9 @@ X = np.zeros((len(train_target_genes), len(unique_genes)))
 for i, gene in enumerate(train_target_genes):
     X[i, gene_to_idx[gene]] = 1
 
-y = adata_train.X.toarray() if hasattr(adata_train.X, "toarray") else adata_train.X
 
-
-# apply log1p transformation
 y_raw = adata_train.X.toarray() if hasattr(adata_train.X, "toarray") else adata_train.X
+# apply log1p transformation
 y = np.log1p(y_raw)
 
 
@@ -118,6 +117,7 @@ fold_results = {
     'celleval_mae': [], 'celleval_des': [], 'celleval_pds': []
 }
 
+
 for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
     print(f"Fold {fold_idx + 1}/{args.n_folds}")
     
@@ -141,6 +141,7 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
         y_train_pred = np.tile(baseline_pred, (len(train_idx), 1))
         y_val_pred = np.tile(baseline_pred, (len(val_idx), 1))
 
+    # RIDGE MODEL
     if args.model == 'ridge':
         print("\n[Ridge] Training model...")
         ridge_model = MultiOutputRegressor(
@@ -182,24 +183,45 @@ for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
         y_train_pred = rf_model.predict(X_train_fold)
         y_val_pred = rf_model.predict(X_val_fold)
 
+    # GRADIENT BOOSTING MODEL
+    if args.model == 'gradientboost':
+        print("\n[GradientBoosting] Training model...")
+        gb_model = MultiOutputRegressor(
+        	GradientBoostingRegressor(
+        	    n_estimators=10,
+        	    max_depth=5,
+        	    learning_rate=0.1,
+        	    subsample=0.8,
+        	    random_state=42,
+        	),
+        n_jobs=24
+    )
+        
+        print("Built model")
+        gb_model.fit(X_train_fold, y_train_fold)
+    
+        print("[GradientBoosting] Predicting...")
+        y_train_pred = gb_model.predict(X_train_fold)
+        y_val_pred = gb_model.predict(X_val_fold)
+
     # VARIATIONAL AUTOENCODER
     if args.model == 'vae':
         print("\n[VAE] Training model...")
         vae_model = train_vae(
-            X_train_fold, y_train_fold,
-            latent_dim=128,
-            epochs=50,
-            batch_size=256,
+            X_train_fold,
+            y_train_fold,
+            latent_dim=64,
+            epochs=100,
+            batch_size=512,
             learning_rate=1e-3,
             device='cuda'
         )
         
         print("[VAE] Predicting...")
-        n_genes_train = y_train_fold.shape[1]
-        n_genes_val = y_val_fold.shape[1]
-        y_train_pred = predict_vae(vae_model, X_train_fold, n_genes_train,
+        
+        y_train_pred = predict_vae(vae_model, X_train_fold,
                 device='cuda')
-        y_val_pred = predict_vae(vae_model, X_val_fold, n_genes_val, 
+        y_val_pred = predict_vae(vae_model, X_val_fold,
                 device='cuda')
     
     fold_results['train_mae'].append(
@@ -275,7 +297,7 @@ summary = pd.DataFrame({
 print("\n" + summary.to_string(index=False))
 
 # Save results
-summary.to_csv(f'results/{args.model}_cv_summary_celleval.csv', index=False)
+summary.to_csv(f'results/{args.model}_cv_summary_celleval_final.csv', index=False)
 
 # Save detailed results
 detailed_df = pd.DataFrame({
@@ -288,7 +310,7 @@ detailed_df = pd.DataFrame({
     f'{args.model}_DES': fold_results['celleval_des'],
     f'{args.model}_PDS': fold_results['celleval_pds'],
 })
-detailed_df.to_csv(f'results/{args.model}_cv_detailed_celleval.csv', index=False)
+detailed_df.to_csv(f'results/{args.model}_cv_detailed_celleval_final.csv', index=False)
 
 print(f"\nSaved: {args.model}_cv_summary_celleval.csv")
 print(f"\nSaved: {args.model}_detailed_celleval.csv")
