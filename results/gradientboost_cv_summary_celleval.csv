@@ -1,0 +1,2 @@
+Model,Train MAE (sklearn),Val MAE (sklearn),Train MSE (sklearn),Val MSE (sklearn),MAE (cell-eval),DES (cell-eval),PDS (cell-eval)
+gradientboost,0.2792±0.0000,0.2792±0.0002,0.1786±0.0000,0.1786±0.0002,0.0351±0.0003,0.1205±0.0032,0.5422±0.0008
