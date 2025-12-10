@@ -8,6 +8,7 @@
 #SBATCH --mem=256G
 #SBATCH --output=slurm/gradboost_%j.out
 #SBATCH --error=slurm/gradboost_%j.err
+#SBATCH --chdir=../scripts
 
 source ~/.bashrc
 conda activate vcc_py3.10
