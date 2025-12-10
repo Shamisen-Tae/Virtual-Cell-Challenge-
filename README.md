@@ -8,11 +8,30 @@ This repository contains code and experiments for benchmarking a variety of mach
 * `scripts/` contains the Python script used to run our experiments and our VAE implementation.
 
 ### How To Run Experiments:
+#### Recommended packages (Python >=3.10 recommended):
+`pip install requirements.txt`
+* cell-eval                 0.6.6
+* anndata                   0.11.3
+* ipykernel                 6.31.0
+* ipython                   8.30.0
+* jupyterlab                4.4.7
+* matplotlib                3.10.7
+* numpy                     2.2.6
+* pandas                    2.3.3
+* scanpy                    1.11.5
+* scikit-learn              1.7.2
+* scipy                     1.15.2
+* seaborn                   0.13.2
+* torch                     2.9.1
+
+#### Script:
 `scripts/run_cv.py` is the main experiment script. 
+
 #### Required arguments: 
 * the model type to run (choose from `baseline`, `ridge`, `elasticnet`, `randomforest`, `gradientboost`, and `vae`)
 * the number of folds for cross-validation (default is `5`)
 * the location of the VCC training file.
+
 
 #### Example
 ```
