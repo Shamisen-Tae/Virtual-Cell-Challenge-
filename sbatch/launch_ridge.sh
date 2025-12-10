@@ -9,6 +9,7 @@
 #SBATCH --output=slurm/ridge_%j.out
 #SBATCH --error=slurm/ridge_%j.err
 
+cd $SLURM_SUBMIT_DIR
 source ~/.bashrc
 conda activate vcc_py3.10
 

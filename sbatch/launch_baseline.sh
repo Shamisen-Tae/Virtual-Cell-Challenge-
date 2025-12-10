@@ -10,6 +10,7 @@
 #SBATCH --error=slurm/baseline_%j.err
 # NOTE: make sure slurm/ dir exists before running!
 
+cd $SLURM_SUBMIT_DIR
 source ~/.bashrc
 conda activate vcc_py3.10
 
